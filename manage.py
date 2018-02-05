@@ -43,7 +43,7 @@ def drive(cfg, model_path=None, use_joystick=False):
     if cfg.OS == cfg.LINUX_OS:
         cam = PiCamera(resolution=cfg.CAMERA_RESOLUTION)
     elif cfg.OS == cfg.MAC_OS:
-        cam = VideoStream(framerate = cfg.DRIVE_LOOP_HZ)
+        cam = VideoStream(camera="carla", framerate = cfg.DRIVE_LOOP_HZ)
         #cam = MacWebcam()
     V.add(cam, outputs=['cam/image_array'], threaded=True)
     
@@ -57,7 +57,7 @@ def drive(cfg, model_path=None, use_joystick=False):
         #This web controller will create a web server that is capable
         #of managing steering, throttle, and modes, and more.
         ctr = LocalWebController()
-
+    
     #Lane Detector
     #Detects the lane the car is in and outputs a best estimate for the 2 lines
     lane_detector = LanesDetector()

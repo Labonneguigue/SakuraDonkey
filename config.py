@@ -33,9 +33,19 @@ MAX_LOOPS = 100000
 #CAMERA
 CAMERA_RESOLUTION = (120, 160) #(height, width)
 CAMERA_FRAMERATE = DRIVE_LOOP_HZ
-CAMERA_ID = "pi_cam"
-#  CAMERA_ID = "pi_cam_wide"
-#  CAMERA_ID = "carla"
+CAMERA_ID = "carla"
+'''
+The different cameras available are the regular raspberry pi
+camera, the raspberry pi camera with a wide angle and the camera
+mounted in Carla (Udacity's self driving car) from which
+recordings have been made.
+For each camera, the camera matrix and distance coefficients
+must be computed for having an accurate representation of the
+world.
+-   CAMERA_ID = "pi_cam"
+-   CAMERA_ID = "pi_cam_wide"
+-   CAMERA_ID = "carla"
+'''
 
 #STEERING
 STEERING_CHANNEL = 0
