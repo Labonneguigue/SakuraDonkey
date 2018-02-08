@@ -1,3 +1,4 @@
+import time
 import argparse
 import numpy as np
 from numpy.linalg import inv
@@ -9,7 +10,7 @@ import matplotlib.image as mpimg
 from moviepy.editor import VideoFileClip
 
 from donkeycar.parts.calibration import Calibration
-
+from donkeycar.parts.vehiclepart import VehiclePart
 
 class CalibratedAlgorithm(object):
     '''
@@ -27,7 +28,7 @@ class CalibratedAlgorithm(object):
         '''
         return self.mtx, self.dist
 
-class LanesDetector(CalibratedAlgorithm):
+class LanesDetector(CalibratedAlgorithm, VehiclePart):
     '''
     This node takes as input an image and detects the left and right lines that
     constitute the lane the car is in.
@@ -43,11 +44,11 @@ class LanesDetector(CalibratedAlgorithm):
         self.imageHeight = img_size[0]
         self.imageWidth = img_size[1]
         self.cfg = config
-        print(self.cfg)
         self.reset()
 
     def reset(self):
         self.imageCounter = 0
+        self.runtime = 0
         # Indicates whether the sliding window histogram needs to
         # be computed
         self.lanesDetected = None
@@ -76,7 +77,7 @@ class LanesDetector(CalibratedAlgorithm):
         self.left_lane_inds = []
         self.right_lane_inds = []
         # Set the width of the windows +/- margin
-        self.margin = P.parameters['margin']
+        self.margin = self.cfg['margin']
         # Set minimum number of pixels found to recenter window
         self.minpix = 50
         # Image to write on and visualize the results
@@ -91,6 +92,8 @@ class LanesDetector(CalibratedAlgorithm):
         # Position of the car away from the center of the lane (m)
         self.carPosition = 0
         self.carSide = "Uninitialized" # "Left " or "Right"
+        # Result kept in case the algorithm is ran in a threaded environment
+        self.result = None
 
     def InitPerspectiveMatrix(self, img):
         '''
@@ -107,13 +110,13 @@ class LanesDetector(CalibratedAlgorithm):
             again
         '''
         src = np.float32(
-            [[P.parameters['orig_points_x'][0], P.parameters['orig_points_y']],
-             [P.parameters['orig_points_x'][1],  P.parameters['orig_points_y']],
-             [P.parameters['orig_points_x'][2],  img.shape[0]],
-             [P.parameters['orig_points_x'][3],  img.shape[0]]])
+            [[self.cfg['orig_points_x'][0], self.cfg['orig_points_y']],
+             [self.cfg['orig_points_x'][1],  self.cfg['orig_points_y']],
+             [self.cfg['orig_points_x'][2],  img.shape[0]],
+             [self.cfg['orig_points_x'][3],  img.shape[0]]])
         dst = np.float32(
-            [[(img.shape[1] / 4),    P.parameters['detection_distance']],
-             [ (img.shape[1] * 3 / 4),P.parameters['detection_distance']],
+            [[(img.shape[1] / 4),    self.cfg['detection_distance']],
+             [ (img.shape[1] * 3 / 4),self.cfg['detection_distance']],
              [ (img.shape[1] * 3 / 4), img.shape[0]],
              [ (img.shape[1] / 4),     img.shape[0]]])
         self.perspectiveMat = cv2.getPerspectiveTransform(src, dst)
@@ -605,24 +608,25 @@ class LanesDetector(CalibratedAlgorithm):
     def ProcessImage(self, image, key_frame_interval=20, cache_length=10):
         assert(image.shape[0] == self.imageHeight)
         assert(image.shape[1] == self.imageWidth)
+        start = time.time()
         #TODO: Maybe change that
         # Initialisation on first frame
         if self.perspectiveMat is None:
-            InitPerspectiveMatrix(image)
+            self.InitPerspectiveMatrix(image)
         
         self.imageCounter += 1
 
+        # Undistort the image to take into account the lens distortion
         undistorted = cv2.undistort(image, self.mtx, self.dist, None, self.mtx)
+
+        # Create a top down view of the road ahead of the car
         topDownView = self.PerspectiveTransform(undistorted, self.perspectiveMat)
+
+        # Binarize the top down view by keeping the lane pixels
         topDownViewBinarized = self.Binarization(topDownView)
 
-        binary = self.Binarization(undistorted)
-        #topDownViewBinarized = self.PerspectiveTransform(binary, PersMat)
-        #topDownView = self.PerspectiveTransform(undistorted, PersMat)
-
-        # result = self.BlindSlidingWindowsHistogram(topDownViewBinarized)
-        # self.PolynomialFitAnalysis()
-        # result, ploty, l_fit, r_fit = self.VisualizeHistogramPolynomial(result)
+        if self.cfg['debug_output']:
+            binary = self.Binarization(undistorted)
 
         if self.lanesDetected:
             self.DetectionFromPreviousPolynomial(topDownViewBinarized)
@@ -636,16 +640,18 @@ class LanesDetector(CalibratedAlgorithm):
 
         self.UpdateLateralLanePosition()
         self.UpdateCurvatureRadius()
-        self.RenderText(image)
-        overlaidLane = self.OverlayDetectedLane(image)
+        self.RenderText(undistorted)
+        overlaidLane = self.OverlayDetectedLane(undistorted)
         topDownViewOverlaidLane = self.OverlayDetectedLane(topDownView, unwarp=False)
 
         # Create an output image composed of different views for debug and illustration purposes
-        if P.parameters['debug_output']:
+        if self.cfg['debug_output']:
             result = self.AggregateViews([overlaidLane, binary, result, topDownViewOverlaidLane])
         else:
             result = overlaidLane
 
+        self.runtime = time.time() - start
+        print(self.runtime)
         return result
 
     def OutputImages(self, image, key_frame_interval=20, cache_length=10):
@@ -660,21 +666,28 @@ class LanesDetector(CalibratedAlgorithm):
         if reset is True:
             print("LaneDetector reset ...")
             self.reset()
-        return self.ProcessImage(image)
+        return self.ProcessImage(image), self.runtime
+
+    def run_threaded(self, image=None, reset=False):
+        while self.on:
+            self.result = self.ProcessImage(image)
+
+    def shutdown(self):
+        self.on = False
+        
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Detects lane lines on the road. Can be used online (using the camera) or offline (using a recording.')
     parser.add_argument('-c', '--camera', action="store_true", help='uses the camera as an input the the algorithm')
     args = parser.parse_args()
-    print(args.camera)
 
     lanesDetector = LanesDetector("carla")
 
-    print('Processing video ... ' + P.parameters['videofile_in'])
-    vfc = VideoFileClip(P.parameters['videofile_in']).subclip(20, 24)
-    if P.parameters['output_video_as_images']:
+    print('Processing video ... ' + self.cfg['videofile_in'])
+    vfc = VideoFileClip(self.cfg['videofile_in']).subclip(20, 24)
+    if self.cfg['output_video_as_images']:
         detected_vid_clip = vfc.fl_image(lanesDetector.OutputImages)
     else:
         detected_vid_clip = vfc.fl_image(lanesDetector.ProcessImage)
-    detected_vid_clip.write_videofile(P.parameters['videofile_out'], audio=False)
+    detected_vid_clip.write_videofile(self.cfg['videofile_out'], audio=False)

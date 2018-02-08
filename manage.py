@@ -24,7 +24,7 @@ from donkeycar.parts.actuator import PCA9685, PWMSteering, PWMThrottle, MockCont
 from donkeycar.parts.datastore import TubHandler, TubGroup
 from donkeycar.parts.controller import LocalWebController, JoystickController
 
-from detect import LanesDetector
+from lanedetection import LanesDetector
 
 
 def drive(cfg, model_path=None, use_joystick=False):
@@ -43,7 +43,7 @@ def drive(cfg, model_path=None, use_joystick=False):
     if cfg.OS == cfg.LINUX_OS:
         cam = PiCamera(resolution=cfg.CAMERA_RESOLUTION)
     elif cfg.OS == cfg.MAC_OS:
-        cam = VideoStream(camera="carla", framerate = cfg.DRIVE_LOOP_HZ)
+        cam = VideoStream(camera=cfg.CAMERA_ID, framerate = cfg.DRIVE_LOOP_HZ)
         #cam = MacWebcam()
     V.add(cam, outputs=['cam/image_array'], threaded=True)
     
@@ -58,17 +58,24 @@ def drive(cfg, model_path=None, use_joystick=False):
         #of managing steering, throttle, and modes, and more.
         ctr = LocalWebController()
     
-    #Lane Detector
-    #Detects the lane the car is in and outputs a best estimate for the 2 lines
-    lane_detector = LanesDetector()
-
-    V.add(lane_detector, inputs=['cam/image_array'])
-
     V.add(ctr, 
-          inputs=['cam/image_array'],
-          outputs=['user/angle', 'user/throttle', 'user/mode', 'recording'],
+          inputs=['cam/image_overlaid_lanes', 'ld/runtime'],
+          outputs=[ 'user/angle',
+                    'user/throttle',
+                    'user/mode',
+                    'recording',
+                    'algorithm/reset'
+                    ],
           threaded=True)
     
+    #Lane Detector
+    #Detects the lane the car is in and outputs a best estimate for the 2 lines
+    lane_detector = LanesDetector(cfg.CAMERA_ID, cfg.LD_PARAMETERS)
+
+    V.add(lane_detector,
+            inputs=['cam/image_array', 'algorithm/reset'],
+            outputs=['cam/image_overlaid_lanes', 'ld/runtime'])
+
     #See if we should even run the pilot module. 
     #This is only needed because the part run_condition only accepts boolean
     def pilot_condition(mode):
@@ -145,7 +152,7 @@ def drive(cfg, model_path=None, use_joystick=False):
 
 def train(cfg, tub_names, model_name):
     '''
-    use the specified data in tub_names to train an artifical neural network
+    use the specified data in tub_names to train an artificial neural network
     saves the output trained model as model_name
     '''
     X_keys = ['cam/image_array']
