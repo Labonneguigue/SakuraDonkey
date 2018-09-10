@@ -1,3 +1,13 @@
+# Images
+*.jpg
+
+# Tub data
+data/
+models/
+
+# Visual Studio Code
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
