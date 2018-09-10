@@ -561,7 +561,7 @@ class LanesDetector(CalibratedAlgorithm, VehiclePart):
 
         if unwarp:
             # Warp the empty back to original image space using inverse perspective matrix
-            output = cv2.warpPerspective(lane, self.inversePerspectiveMat, (self.imageWidth, self.imageHeight))
+            output = cv2.warpPerspective(lane, self.inversePerspectiveMat, (self.imageWidth, self.imageHeight), flags=cv2.INTER_LINEAR)
         else:
             #If no unwarp, the detected lane is still in topDownView mode
             output = lane
@@ -668,13 +668,16 @@ class LanesDetector(CalibratedAlgorithm, VehiclePart):
             self.reset()
         return self.ProcessImage(image), self.runtime
 
-    def run_threaded(self, image=None, reset=False):
+    def update(self, image=None, reset=False):
         while self.on:
             self.result = self.ProcessImage(image)
 
+    def run_threaded(self):
+        pass
+
     def shutdown(self):
         self.on = False
-        
+
 
 if __name__ == "__main__":
 
