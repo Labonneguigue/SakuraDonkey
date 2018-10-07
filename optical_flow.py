@@ -2,62 +2,104 @@
 
 import numpy as np
 import cv2 as cv
+import sys
+import os
+import cv2
 
-cap = cv.VideoCapture('movie.mp4')
 
-# params for Shi-Tomasi corner detection
-feature_params = dict( maxCorners = 100,
-                       qualityLevel = 0.3,
-                       minDistance = 7,
-                       blockSize = 7 )
+class OpticalFlow(object):
+    def __init__(self):
+        # params for Shi-Tomasi corner detection
+        self.feature_params = dict( maxCorners = 3000,
+                                    qualityLevel = 0.01,
+                                    minDistance = 7,
+                                    blockSize = 7 )
 
-# Parameters for lucas kanade optical flow
-lk_params = dict( winSize  = (15,15),
-                  maxLevel = 2,
-                  criteria = (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 10, 0.03))
+        # Parameters for lucas kanade optical flow
+        self.lk_params = dict( winSize  = (15,15),
+                                maxLevel = 2,
+                                criteria = (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 10, 0.03))
+        self.old_gray = None
+        self.p0 = None
 
-# Create some random colors
-color = np.random.randint(0,255,(100,3))
+    def compute(self, img):
+        # Create a mask image for drawing purposes
+        mask = np.zeros_like(img)
+        # Conversion to gray scale image for detection
+        frame_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-# Take first frame and find corners in it
-ret, old_frame = cap.read()
-old_gray = cv.cvtColor(old_frame, cv.COLOR_BGR2GRAY)
-p0 = cv.goodFeaturesToTrack(old_gray, mask = None, **feature_params)
+        if self.old_gray is not None:
+            self.p0 = cv.goodFeaturesToTrack(self.old_gray, mask = None, **self.feature_params)
+            # calculate optical flow
+            p1, st, err = cv.calcOpticalFlowPyrLK(self.old_gray, frame_gray, self.p0, None, **self.lk_params)
+            
+            if p1 is None:
+                self.p0 = cv.goodFeaturesToTrack(self.old_gray, mask = None, **self.feature_params)
+                p1, st, err = cv.calcOpticalFlowPyrLK(self.old_gray, frame_gray, self.p0, None, **self.lk_params)
 
-# Create a mask image for drawing purposes
-mask = np.zeros_like(old_frame)
-while(1):
-    ret,frame = cap.read()
-    # Check that the image was retrieved correctly
-    if ret == True:
-        frame_gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+            # Select good points
+            good_new = p1[st==1]
+            good_old = self.p0[st==1]
+            
+            # draw the tracks
+            for i,(new,old) in enumerate(zip(good_new,good_old)):
+                a,b = new.ravel()
+                c,d = old.ravel()
+                mask = cv.line(mask, (a,b),(c,d),(0,128,0), 1)
+                img = cv.circle(img,(a,b),5,(255,0,0),1)
+            img = cv.add(img,mask)
+            
+            # Now update the previous frame and previous points
+            self.p0 = good_new.reshape(-1,1,2)
+        self.old_gray = frame_gray.copy()
         
-        # calculate optical flow
-        p1, st, err = cv.calcOpticalFlowPyrLK(old_gray, frame_gray, p0, None, **lk_params)
-        
-        if p1 is None:
-            p0 = cv.goodFeaturesToTrack(old_gray, mask = None, **feature_params)
-            p1, st, err = cv.calcOpticalFlowPyrLK(old_gray, frame_gray, p0, None, **lk_params)
+        return img
 
-        # Select good points
-        good_new = p1[st==1]
-        good_old = p0[st==1]
-        
-        # draw the tracks
-        for i,(new,old) in enumerate(zip(good_new,good_old)):
-            a,b = new.ravel()
-            c,d = old.ravel()
-            mask = cv.line(mask, (a,b),(c,d), color[i].tolist(), 2)
-            frame = cv.circle(frame,(a,b),5,color[i].tolist(),-1)
-        img = cv.add(frame,mask)
-        cv.imshow('frame',img)
-        k = cv.waitKey(30) & 0xff
-        if k == 27:
+class Renderer(object):
+    def __init__(self):
+        pass
+
+    def display_frame(self, img):
+        cv2.imshow('frame',img)
+        k = cv2.waitKey(1)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("%s <video.mp4>" % sys.argv[0])
+        exit(-1)
+    cap = cv2.VideoCapture(sys.argv[1])
+    # camera parameters
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    CNT = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    F = float(os.getenv("F", "525"))
+    if os.getenv("SEEK") is not None:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(os.getenv("SEEK")))
+
+    if W > 1024:
+        downscale = 1024.0/W
+        F *= downscale
+        H = int(H * downscale)
+        W = 1024
+    print("using camera %dx%d with F %f" % (W,H,F))
+
+    of = OpticalFlow()
+    renderer = Renderer()
+
+    # camera intrinsics
+    K = np.array([[F,0,W//2],[0,F,H//2],[0,0,1]])
+    Kinv = np.linalg.inv(K)
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        frame = cv2.resize(frame, (W,H))
+        if ret == True:
+            frame = of.compute(frame)
+            renderer.display_frame(frame)
+        else:
             break
-        
-        # Now update the previous frame and previous points
-        old_gray = frame_gray.copy()
-        p0 = good_new.reshape(-1,1,2)
 
-cv.destroyAllWindows()
-cap.release()
+    cv.destroyAllWindows()
+    cap.release()
